@@ -379,123 +379,127 @@ static BOOL RKVTClassIsCollection(Class aClass)
 
 + (instancetype)iso8601TimestampToDateValueTransformer
 {
-    static dispatch_once_t onceToken;
-    static RKBlockValueTransformer *valueTransformer;
-    return [self singletonValueTransformer:&valueTransformer name:NSStringFromSelector(_cmd) onceToken:&onceToken validationBlock:^BOOL(__unsafe_unretained Class sourceClass, __unsafe_unretained Class destinationClass) {
-        return (([sourceClass isSubclassOfClass:[NSString class]] && [destinationClass isSubclassOfClass:[NSDate class]]) ||
-                ([sourceClass isSubclassOfClass:[NSDate class]] && [destinationClass isSubclassOfClass:[NSString class]]));
-    } transformationBlock:^BOOL(id inputValue, __autoreleasing id *outputValue, __unsafe_unretained Class outputValueClass, NSError *__autoreleasing *error) {
-        static dispatch_once_t onceToken;
-        static NSArray *validClasses;
-        dispatch_once(&onceToken, ^{
-            validClasses = @[ [NSString class], [NSDate class] ];
-        });
-        RKValueTransformerTestInputValueIsKindOfClass(inputValue, validClasses, error);
-        RKValueTransformerTestOutputValueClassIsSubclassOfClass(outputValueClass, validClasses, error);
-        if ([outputValueClass isSubclassOfClass:[NSDate class]]) {
-            static unsigned int const ISO_8601_MAX_LENGTH = 29;
+      static dispatch_once_t onceToken;
+      static RKBlockValueTransformer *valueTransformer;
+      return [self singletonValueTransformer:&valueTransformer name:NSStringFromSelector(_cmd) onceToken:&onceToken validationBlock:^BOOL(__unsafe_unretained Class sourceClass, __unsafe_unretained Class destinationClass) {
+            return (([sourceClass isSubclassOfClass:[NSString class]] && [destinationClass isSubclassOfClass:[NSDate class]]) ||
+                                    ([sourceClass isSubclassOfClass:[NSDate class]] && [destinationClass isSubclassOfClass:[NSString class]]));
+        } transformationBlock:^BOOL(id inputValue, __autoreleasing id *outputValue, __unsafe_unretained Class outputValueClass, NSError *__autoreleasing *error) {
+              static dispatch_once_t onceToken;
+              static NSArray *validClasses;
+              dispatch_once(&onceToken, ^{
+                    validClasses = @[ [NSString class], [NSDate class] ];
+                });
+              RKValueTransformerTestInputValueIsKindOfClass(inputValue, validClasses, error);
+              RKValueTransformerTestOutputValueClassIsSubclassOfClass(outputValueClass, validClasses, error);
+              if ([outputValueClass isSubclassOfClass:[NSDate class]]) {
+                    static unsigned int const ISO_8601_MAX_LENGTH = 29;
+        
+                    if ([(NSString *)inputValue length] == 0) {
+                          NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Cannot transform a zero length string"] };
+                          if (error) *error = [NSError errorWithDomain:RKValueTransformersErrorDomain code:RKValueTransformationErrorUntransformableInputValue userInfo:userInfo];
+                          return NO;
+                      }
+        
+                    static NSRegularExpression *validISO8601RegularExpression = nil;
+                    static dispatch_once_t onceToken;
+                    dispatch_once(&onceToken, ^{
+                          NSError *error = nil;
+                          static const char * REGEX_ISO8601_TIMESTAMP =
+                          "\\A(\\d{4})-(\\d{2})-(\\d{2})[T\\s](\\d{2}):(\\d{2}):(\\d{2})" // Mandatory - YYYY-MM-DD(T|\s)hh:mm:ss
+                          "(?:"
+                          "[.](\\d{1,6})"                                   // Optional - .nnnnnn
+                          ")?"
+                          "(?:"
+                          "([+-])(\\d{2}):?(\\d{2})|Z"                       // Optional -[+-]hh:?mm or Z
+                          ")?\\z";
+                          NSString *regexString = [[NSString alloc] initWithUTF8String:REGEX_ISO8601_TIMESTAMP];
+                          validISO8601RegularExpression = [NSRegularExpression regularExpressionWithPattern:regexString
+                                                                                                                                                     options:NSRegularExpressionCaseInsensitive
+                                                                                                                                                       error:&error];
+          
+                          if (! validISO8601RegularExpression) [NSException raise:NSInternalInconsistencyException format:@"The ISO 8601 validation regex failed to parse: %@", error];
+                      });
+        
+                    if (! [validISO8601RegularExpression numberOfMatchesInString:(NSString *)inputValue options:0 range:NSMakeRange(0, [inputValue length])]) {
+                          NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Input value is not a valid ISO 8601 string: '%@'", inputValue] };
+                          if (error) *error = [NSError errorWithDomain:RKValueTransformersErrorDomain code:RKValueTransformationErrorUntransformableInputValue userInfo:userInfo];
+                          return NO;
+                      }
+                    
+                    /* Strip milliseconds prior to parsing */
+                    double milliseconds = 0.f;
+                    if (19 < [inputValue length] && ([inputValue characterAtIndex:19] == '.' || [inputValue characterAtIndex:19] == ':')) {
+                          NSMutableString *newInputString = [NSMutableString stringWithString:[inputValue substringToIndex:19]];
+                          NSMutableString *millisecondsString = [NSMutableString new];
+                          
+                          NSUInteger index = 20;
+                          for (; index < [inputValue length]; index++)
+                            {
+                                  unichar digit = [inputValue characterAtIndex:index];
+                                  if(digit >= '0' && digit <= '9')
+                                        [millisecondsString appendString:[NSString stringWithFormat:@"%C", digit]];
+                                  else
+                                        break;
+                              }
+                          
+                          if (index != 20 && index < [inputValue length])
+                                [newInputString appendString:[inputValue substringFromIndex:index]];
+                          
+                          inputValue = [NSString stringWithString:newInputString];
+                          milliseconds = [millisecondsString doubleValue]/1000.f;
+                      }
+                    
+                    const char *constSource = [(NSString *)inputValue cStringUsingEncoding:NSUTF8StringEncoding];
+                    size_t length = strlen(constSource);
+                    
+                    char source[ISO_8601_MAX_LENGTH];
+                    memcpy(source, constSource, sizeof (source));
+                    if (constSource[10] != 'T')
+                          source[10] = 'T';
+                    
+                    char destination[ISO_8601_MAX_LENGTH];
+                    if (length == 19) {
+                          memcpy(destination, source, length);
+                          strncpy(destination + length, "+0000\0", 6);
+                      }else if (length == 20 && source[length - 1] == 'Z') {
+                            memcpy(destination, source, length - 1);
+                            strncpy(destination + length - 1, "+0000\0", 6);
+                        } else {
+                              memcpy(destination, source, sizeof (destination));
+                              if (length == 25 && source[22] == ':') {
+                                    destination[22] = destination[23];
+                                    destination[23] = destination[24];
+                                    destination[24] = '\0';
+                                }
+                          }
+                    
+                    struct tm time = {
+                          .tm_isdst = -1,
+                      };
+                    
+                    strptime_l(destination, "%FT%T%z", &time, NULL);
+                    
+                    time_t timeIntervalSince1970 = mktime(&time);
+                    RKValueTransformerTestTransformation(timeIntervalSince1970 != -1, error, @"Failed transformation to date representation: time range is beyond the bounds supported by mktime");
+                  NSLog(@"2 Milli Mike: %@, input: %@, float: %f, milli: %f", [[NSDate dateWithTimeIntervalSince1970:(double)timeIntervalSince1970] dateByAddingTimeInterval:(milliseconds / 1000.0f)], inputValue, ((((double)timeIntervalSince1970 * 1000.0) + milliseconds) / 1000.0), milliseconds);
+                    *outputValue = [[NSDate dateWithTimeIntervalSince1970:(double)timeIntervalSince1970] dateByAddingTimeInterval:(milliseconds / 1000.0f)];
+                } else if ([outputValueClass isSubclassOfClass:[NSString class]]) {
+                    NSLog(@"Milli Mike: ");
+                      static NSDateFormatter *iso8601DateFormatter = nil;
+                      static dispatch_once_t onceToken;
+                      dispatch_once(&onceToken, ^{
+                            iso8601DateFormatter = [[NSDateFormatter alloc] init];
+                            [iso8601DateFormatter setDateFormat:@"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"];
+                            [iso8601DateFormatter setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"UTC"]];
+                            [iso8601DateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"]];
+                        });
+                    NSLog(@"1 Milli Mike: %@, input: %@", [iso8601DateFormatter stringFromDate:(NSDate *)inputValue], inputValue);
+                      *outputValue = [iso8601DateFormatter stringFromDate:(NSDate *)inputValue];
+                  }
+              return YES;
+          }];
 
-            if ([(NSString *)inputValue length] == 0) {
-                NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Cannot transform a zero length string"] };
-                if (error) *error = [NSError errorWithDomain:RKValueTransformersErrorDomain code:RKValueTransformationErrorUntransformableInputValue userInfo:userInfo];
-                return NO;
-            }
-
-            static NSRegularExpression *validISO8601RegularExpression = nil;
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^{
-                NSError *error = nil;
-                static const char * REGEX_ISO8601_TIMESTAMP =
-                "\\A(\\d{4})-(\\d{2})-(\\d{2})[T\\s](\\d{2}):(\\d{2}):(\\d{2})" // Mandatory - YYYY-MM-DD(T|\s)hh:mm:ss
-                "(?:"
-                "[.](\\d{1,6})"                                   // Optional - .nnnnnn
-                ")?"
-                "(?:"
-                "([+-])(\\d{2}):?(\\d{2})|Z"                       // Optional -[+-]hh:?mm or Z
-                ")?\\z";
-                NSString *regexString = [[NSString alloc] initWithUTF8String:REGEX_ISO8601_TIMESTAMP];
-                validISO8601RegularExpression = [NSRegularExpression regularExpressionWithPattern:regexString
-                                                                                          options:NSRegularExpressionCaseInsensitive
-                                                                                            error:&error];
-
-                if (! validISO8601RegularExpression) [NSException raise:NSInternalInconsistencyException format:@"The ISO 8601 validation regex failed to parse: %@", error];
-            });
-
-            if (! [validISO8601RegularExpression numberOfMatchesInString:(NSString *)inputValue options:0 range:NSMakeRange(0, [inputValue length])]) {
-                NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Input value is not a valid ISO 8601 string: '%@'", inputValue] };
-                if (error) *error = [NSError errorWithDomain:RKValueTransformersErrorDomain code:RKValueTransformationErrorUntransformableInputValue userInfo:userInfo];
-                return NO;
-            }
-            
-            /* Strip milliseconds prior to parsing */
-            double milliseconds = 0.f;
-            if (19 < [inputValue length] && ([inputValue characterAtIndex:19] == '.' || [inputValue characterAtIndex:19] == ':')) {
-                NSMutableString *newInputString = [NSMutableString stringWithString:[inputValue substringToIndex:19]];
-                NSMutableString *millisecondsString = [NSMutableString new];
-                
-                NSUInteger index = 20;
-                for (; index < [inputValue length]; index++)
-                {
-                    unichar digit = [inputValue characterAtIndex:index];
-                    if(digit >= '0' && digit <= '9')
-                        [millisecondsString appendString:[NSString stringWithFormat:@"%C", digit]];
-                    else
-                        break;
-                }
-                
-                if (index != 20 && index < [inputValue length])
-                    [newInputString appendString:[inputValue substringFromIndex:index]];
-                
-                inputValue = [NSString stringWithString:newInputString];
-                milliseconds = [millisecondsString doubleValue] / pow(10, millisecondsString.length);
-            }
-            
-            const char *constSource = [(NSString *)inputValue cStringUsingEncoding:NSUTF8StringEncoding];
-            size_t length = strlen(constSource);
-            
-            char source[ISO_8601_MAX_LENGTH];
-            memcpy(source, constSource, sizeof (source));
-            if (constSource[10] != 'T')
-                source[10] = 'T';
-            
-            char destination[ISO_8601_MAX_LENGTH];
-            if (length == 19) {
-                memcpy(destination, source, length);
-                strncpy(destination + length, "+0000\0", 6);
-            }else if (length == 20 && source[length - 1] == 'Z') {
-                memcpy(destination, source, length - 1);
-                strncpy(destination + length - 1, "+0000\0", 6);
-            } else {
-                memcpy(destination, source, sizeof (destination));
-                if (length == 25 && source[22] == ':') {
-                    destination[22] = destination[23];
-                    destination[23] = destination[24];
-                    destination[24] = '\0';
-                }
-            }
-            
-            struct tm time = {
-                .tm_isdst = -1,
-            };
-            
-            strptime_l(destination, "%FT%T%z", &time, NULL);
-            
-            time_t timeIntervalSince1970 = mktime(&time);
-            RKValueTransformerTestTransformation(timeIntervalSince1970 != -1, error, @"Failed transformation to date representation: time range is beyond the bounds supported by mktime");
-            *outputValue = [NSDate dateWithTimeIntervalSince1970:((double)timeIntervalSince1970 + milliseconds)];
-        } else if ([outputValueClass isSubclassOfClass:[NSString class]]) {
-            static NSDateFormatter *iso8601DateFormatter = nil;
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^{
-                iso8601DateFormatter = [[NSDateFormatter alloc] init];
-                [iso8601DateFormatter setDateFormat:@"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"];
-                [iso8601DateFormatter setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"UTC"]];
-                [iso8601DateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"]];
-            });
-            *outputValue = [iso8601DateFormatter stringFromDate:(NSDate *)inputValue];
-        }
-        return YES;
-    }];
 }
 
 + (instancetype)stringValueTransformer
