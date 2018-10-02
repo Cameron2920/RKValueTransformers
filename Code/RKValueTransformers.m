@@ -482,10 +482,8 @@ static BOOL RKVTClassIsCollection(Class aClass)
                     
                     time_t timeIntervalSince1970 = mktime(&time);
                     RKValueTransformerTestTransformation(timeIntervalSince1970 != -1, error, @"Failed transformation to date representation: time range is beyond the bounds supported by mktime");
-                  NSLog(@"2 Milli Mike: %@, input: %@, float: %f, milli: %f", [[NSDate dateWithTimeIntervalSince1970:(double)timeIntervalSince1970] dateByAddingTimeInterval:(milliseconds / 1000.0f)], inputValue, ((((double)timeIntervalSince1970 * 1000.0) + milliseconds) / 1000.0), milliseconds);
                     *outputValue = [[NSDate dateWithTimeIntervalSince1970:(double)timeIntervalSince1970] dateByAddingTimeInterval:(milliseconds / 1000.0f)];
                 } else if ([outputValueClass isSubclassOfClass:[NSString class]]) {
-                    NSLog(@"Milli Mike: ");
                       static NSDateFormatter *iso8601DateFormatter = nil;
                       static dispatch_once_t onceToken;
                       dispatch_once(&onceToken, ^{
@@ -494,7 +492,6 @@ static BOOL RKVTClassIsCollection(Class aClass)
                             [iso8601DateFormatter setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"UTC"]];
                             [iso8601DateFormatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"]];
                         });
-                    NSLog(@"1 Milli Mike: %@, input: %@", [iso8601DateFormatter stringFromDate:(NSDate *)inputValue], inputValue);
                       *outputValue = [iso8601DateFormatter stringFromDate:(NSDate *)inputValue];
                   }
               return YES;
